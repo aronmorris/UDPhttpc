@@ -3,6 +3,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.xml.crypto.Data;
 import java.io.IOException;
+import java.lang.reflect.Array;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
@@ -117,11 +118,11 @@ public class RDTManager {
 
         logger.info("Manager sending packets now. Total delivery: {} packets.", outbound.size());
 
-        rdt_send(outbound);
+        rdtSend(outbound);
 
     }
 
-    public void rdt_send(ArrayList<Packet> pOut) {
+    public void rdtSend(ArrayList<Packet> pOut) {
 
         int wSize = pOut.size() / 2;
 
@@ -130,46 +131,85 @@ public class RDTManager {
         int wBase = 0;
         int wCap = wSize;
 
-        long[] timeouts = new long[pOut.size()];
+        logger.info("Window: {} - {}.", wBase, wCap);
 
-        for (int i = 0; i < timeouts.length; i++) {
+        ArrayList<Long> timeouts = new ArrayList<>();
 
-            timeouts[i] = timeout + System.currentTimeMillis();
+        for (int i = 0; i < outbound.size(); i++) {
+
+            timeouts.add(timeout + System.currentTimeMillis());
 
         }
 
         try(DatagramChannel channel = DatagramChannel.open()) {
 
-            RDTReceiver receiver = new RDTReceiver(channel);
+            receiver = new RDTReceiver(channel);
 
             receiver.start();
 
             logger.info("Channel open. Beginning RDT send.");
 
             //send initial up to window, then enter loop for the rest of the protocol
-            for (int i = 0; i <= wCap; i++) {
+            for (int i = 0; i < wCap; i++) {
 
                 channel.send(pOut.get(i).toBuffer(), routerAddr);
 
+                logger.info("Sent packet {}.", pOut.get(i).getSequenceNumber());
+
             }
 
-            while(!pOut.isEmpty()) {
+            boolean exit = false;
 
-                for (int i = wBase; i <= wCap; i++) {
 
-                    if(!receiver.recACKS.isEmpty()) {
+            while(!exit) {
 
-                        Packet dummy = receiver.recACKS.take();
+                for (int i = wBase; i < wCap; i++) {
 
-                        String payload = new String(dummy.getPayload(), StandardCharsets.UTF_8);
+                    if(rdtOp(wBase, pOut, timeouts)) {
 
-                        System.out.println(payload);
+                        wBase++;
+                        wCap++;// ((wCap + 1) == pOut.size() ? wCap : wCap++); //cap shouldnt move outside index
+
+                        if (wCap >= pOut.size()) {
+                            wCap = pOut.size();
+                            logger.info("Hit end of buffer");
+                        }
+                        logger.info("Window: {} - {}.", wBase, wCap);
+
+                    }
+
+                    if (timeouts.get(i) < System.currentTimeMillis() && !pOut.get(i).equals(null)) {
+
+                        channel.send(pOut.get(i).toBuffer(), routerAddr);
+
+                        timeouts.set(i, timeout + System.currentTimeMillis());
 
                     }
 
                 }
 
+                int isExitable = 0;
+
+                for (int i = 0; i < pOut.size(); i++) {
+
+                    if (!pOut.get(i).equals(null)) {
+                        isExitable++;
+                        //System.out.println(isExitable);
+                    }
+
+                }
+
+                if (isExitable == pOut.size()) {
+                    exit = true;
+
+                    logger.info("Buffer sent and ACKed, terminating.");
+
+                    receiver.stop();
+
+                }
+
             }
+
 
         } catch(IOException e) {
             e.printStackTrace();
@@ -177,8 +217,47 @@ public class RDTManager {
             e.printStackTrace();
         }
 
+    }
 
+    private boolean rdtOp(int base, ArrayList<Packet> out, ArrayList<Long> timeouts) throws InterruptedException {
 
+        if (receiver.recACKS.equals(null)) {
+            return false;
+        }
+
+        if(!receiver.recACKS.isEmpty()) {
+
+            Packet dummy = receiver.recACKS.take();
+
+            String dStr = new String(dummy.getPayload(), StandardCharsets.UTF_8);
+
+            if (dStr.contains("ACK")) {
+
+                int seq = Integer.parseInt(dStr.substring("ACK ".length())); //ACK removed
+
+                out.set(seq, null);
+                timeouts.set(seq, Long.MAX_VALUE);
+
+                logger.info("Packet seq: {} ACKed.", seq);
+
+                if (seq == base) {
+
+                    logger.info("Lowest seq: {} ACKed, moving window.", seq);
+
+                    return true;
+                }
+
+            } else if (dStr.contains("SYN")) {
+                //TODO TCP handshake logic - refactor: TCP handshake should be Type 2
+
+            } else if (dStr.contains("FIN")) {
+                //TODO TCP handshake logic
+
+            }
+
+        }
+
+        return false;
 
     }
 

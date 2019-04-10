@@ -1,4 +1,6 @@
 import com.sun.xml.internal.bind.api.impl.NameConverter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -26,7 +28,13 @@ import java.util.concurrent.BlockingQueue;
 public class RDTReceiver extends Thread {
 
     protected BlockingQueue<Packet> recACKS;
+    protected BlockingQueue<Packet> plPackets;
+
     private DatagramChannel channel;
+
+    private boolean sigCLOSE = false;
+
+    private Logger logger = LoggerFactory.getLogger(RDTReceiver.class);
 
     @Override
     public void run() {
@@ -37,6 +45,7 @@ public class RDTReceiver extends Thread {
                     .allocate(Packet.MAX_LEN)
                     .order(ByteOrder.BIG_ENDIAN);
 
+            logger.info("Receiver listening for replies.");
 
             while (true) { //continually listen for incoming messages on the sender channel and queue them for the manager to handle
 
@@ -62,10 +71,18 @@ public class RDTReceiver extends Thread {
                 buf.flip();
                 Packet resp = Packet.fromBuffer(buf);
 
-               String payload = new String(resp.getPayload(), StandardCharsets.UTF_8);
+               //String payload = new String(resp.getPayload(), StandardCharsets.UTF_8);
 
-               recACKS.add(resp);
+               if (resp.getType() == 0) { //OVERHEAD: ACK, SYN, FIN, w/e, this doesn't care beyond type. Payload is handled above.
+                   recACKS.add(resp);
+                   logger.info("Overhead reply queued for manager. Buffer at {} entries.", recACKS.size());
+               }
+               else {
+                   plPackets.add(resp); //any other payload
+                   logger.info("Payload reply queued for manager.");
+               }
 
+               keys.clear();
               // System.out.println(payload);
 
 
@@ -81,7 +98,15 @@ public class RDTReceiver extends Thread {
 
         this.channel = channel;
 
-        recACKS = new ArrayBlockingQueue<Packet>(Short.MAX_VALUE); //unknown how many ACKs will be sent but probably less than 32000
+        recACKS = new ArrayBlockingQueue<>(Short.MAX_VALUE); //unknown how many ACKs will be sent but probably less than 32000
+
+        plPackets = new ArrayBlockingQueue<>(Short.MAX_VALUE);
+
+    }
+
+    public void close() {
+
+        sigCLOSE = true;
 
     }
 }

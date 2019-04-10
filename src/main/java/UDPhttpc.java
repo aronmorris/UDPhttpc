@@ -60,7 +60,7 @@ public class UDPhttpc {
 
     private static void runClient(SocketAddress routerAddr, InetSocketAddress serverAddr, long timeout) throws IOException {
 
-        RDTManager manager = new RDTManager(routerAddr, serverAddr, 1000);
+        RDTManager manager = new RDTManager(routerAddr, serverAddr, 5000);
 
         manager.sendPayload("Here are a few bytes TOOOOTalling 2000 bytes in total, just gotta do this a few times to get to or near 100 or a bit past it to see what will happen and if it'll properly parse the thing if given many many many bytes. \n" +
                 "\n" +
