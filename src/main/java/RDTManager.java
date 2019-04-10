@@ -11,6 +11,8 @@ import java.nio.channels.DatagramChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 
 /**
  * RDTManager converts the input payload into Packets conforming to the simulation standard.
@@ -122,7 +124,7 @@ public class RDTManager {
 
     }
 
-    public void rdtSend(ArrayList<Packet> pOut) {
+    public String rdtSend(ArrayList<Packet> pOut) {
 
         int wSize = pOut.size() / 2;
 
@@ -131,13 +133,19 @@ public class RDTManager {
         int wBase = 0;
         int wCap = wSize;
 
+        String reply = "";
+
+        boolean[] exitCond = new boolean[pOut.size()];
+
         logger.info("Window: {} - {}.", wBase, wCap);
 
         ArrayList<Long> timeouts = new ArrayList<>();
 
-        for (int i = 0; i < outbound.size(); i++) {
+        for (int i = 0; i < pOut.size(); i++) {
 
             timeouts.add(timeout + System.currentTimeMillis());
+
+            exitCond[i] = false;
 
         }
 
@@ -161,7 +169,7 @@ public class RDTManager {
             boolean exit = false;
 
 
-            while(!exit) {
+            while(unACKED(exitCond)) {
 
                 for (int i = wBase; i < wCap; i++) {
 
@@ -178,9 +186,11 @@ public class RDTManager {
 
                     }
 
-                    if (timeouts.get(i) < System.currentTimeMillis() && !pOut.get(i).equals(null)) {
+                    if (timeouts.get(i) < System.currentTimeMillis() && !(pOut.get(i).getType() == -1)) {
 
                         channel.send(pOut.get(i).toBuffer(), routerAddr);
+
+                        logger.info("Sent packet {}.", pOut.get(i).getSequenceNumber());
 
                         timeouts.set(i, timeout + System.currentTimeMillis());
 
@@ -188,28 +198,20 @@ public class RDTManager {
 
                 }
 
-                int isExitable = 0;
+                for (int i = 0; i < exitCond.length; i++) {
 
-                for (int i = 0; i < pOut.size(); i++) {
-
-                    if (!pOut.get(i).equals(null)) {
-                        isExitable++;
-                        //System.out.println(isExitable);
-                    }
+                    exitCond[i] = (pOut.get(i).getType()) == -1 ? true : false;
 
                 }
 
-                if (isExitable == pOut.size()) {
-                    exit = true;
-
-                    logger.info("Buffer sent and ACKed, terminating.");
-
-                    receiver.stop();
-
-                }
 
             }
 
+            logger.info("RDT complete. Parsing payload-type replies now.");
+
+            reply = assembleReply();
+
+            receiver.stop();
 
         } catch(IOException e) {
             e.printStackTrace();
@@ -217,6 +219,52 @@ public class RDTManager {
             e.printStackTrace();
         }
 
+        return reply;
+
+    }
+
+    private boolean unACKED(boolean[] vals) {
+
+        for (boolean b : vals) {
+            if (!b) {
+                return true;
+            }
+        }
+
+        return false;
+
+    }
+
+    private String assembleReply() throws InterruptedException {
+
+        StringBuilder reply = new StringBuilder();
+
+        ArrayList<Packet> repIn = new ArrayList();
+
+        //empty the payload queue in whatever order
+        while(!receiver.plPackets.isEmpty()) {
+
+            Packet p = receiver.plPackets.take();
+
+            if (p.getType() == RDTReceiver.PAYLOAD) {
+                repIn.add(p);
+            }
+
+        }
+
+        for (Packet p : repIn) {
+
+            System.out.println(new String(p.getPayload(), StandardCharsets.UTF_8));
+        }
+
+        repIn.sort(Comparator.comparing(Packet::getSequenceNumber)); //order the packets ASC
+
+        for (Packet p : repIn) {
+
+            System.out.println(new String(p.getPayload(), StandardCharsets.UTF_8));
+        }
+
+        return reply.toString();
     }
 
     private boolean rdtOp(int base, ArrayList<Packet> out, ArrayList<Long> timeouts) throws InterruptedException {
@@ -235,7 +283,7 @@ public class RDTManager {
 
                 int seq = Integer.parseInt(dStr.substring("ACK ".length())); //ACK removed
 
-                out.set(seq, null);
+                out.set(seq, new Packet(out.get(seq), -1));
                 timeouts.set(seq, Long.MAX_VALUE);
 
                 logger.info("Packet seq: {} ACKed.", seq);

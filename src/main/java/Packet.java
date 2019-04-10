@@ -28,6 +28,13 @@ public class Packet {
         this.payload = payload;
     }
 
+    public Packet(Packet p, int type) {
+        this.type = type;
+        this.sequenceNumber = p.sequenceNumber;
+        this.peerAddress = p.peerAddress;
+        this.peerPort = p.peerPort;
+        this.payload = p.payload;
+    }
     //for debugging
     public static Packet clonePacket(Packet p, long seq) {
         return new Packet(p.type, seq, p.peerAddress, p.peerPort, p.payload);

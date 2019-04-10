@@ -27,6 +27,10 @@ import java.util.concurrent.BlockingQueue;
  */
 public class RDTReceiver extends Thread {
 
+    protected static final int OVERHEAD = 0;
+    protected static final int PAYLOAD = 1;
+    protected static final int TCP_HANDSHAKE = 2;
+
     protected BlockingQueue<Packet> recACKS;
     protected BlockingQueue<Packet> plPackets;
 
